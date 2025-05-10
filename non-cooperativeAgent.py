@@ -17,6 +17,7 @@ class NonCooperativeAgent(AntStrategy):
         self.movements = {}  # ant_id -> [action1, action2, ...]
         self.path_found = {} # ant_id -> True | False
         self.factor = {} # ant_id -> ..., -2, -1, 0, 1, 2, ...
+        self.returning = {} # ant_id -> True | False
 
     def decide_action(self, perception: AntPerception) -> AntAction:
         """Decide an action based on current perception"""
@@ -52,6 +53,47 @@ class NonCooperativeAgent(AntStrategy):
         # Otherwise, perform movement
         action = self._decide_movement(perception)
         return action
+    
+    def _random_move(self, ant_id, movement_list, perception):
+        movement_choice = random.random()
+        
+
+        if (0,1) in perception.visible_cells:
+
+            front_cell = perception.visible_cells[(0,1)]
+        elif (1,0) in perception.visible_cells:
+            front_cell = perception.visible_cells[(1,0)]
+        elif (-1,0) in perception.visible_cells:
+            front_cell = perception.visible_cells[(-1,0)]
+        elif (0,-1) in perception.visible_cells:
+            front_cell = perception.visible_cells[(0,-1)]
+        else:
+            front_cell = None
+
+        # print(f"SURROUNDINGS : {perception.visible_cells}")
+        # print(f"FRONT : {front_cell}")
+        if front_cell == TerrainType.WALL or len(perception.visible_cells) == 1 or len(perception.visible_cells) == 4:
+            if movement_choice > 0.5:
+                movement_list.append("TURN RIGHT")
+                self.movements[ant_id] = movement_list
+                return AntAction.TURN_RIGHT
+            elif movement_choice <= 0.5:
+                movement_list.append("TURN_LEFT")
+                self.movements[ant_id] = movement_list
+                return AntAction.TURN_LEFT
+        else:
+            if movement_choice < 0.6:
+                movement_list.append("MOVE_FORWARD")
+                self.movements[ant_id] = movement_list
+                return AntAction.MOVE_FORWARD
+            elif movement_choice < 0.8:
+                movement_list.append("TURN_LEFT")
+                self.movements[ant_id] = movement_list
+                return AntAction.TURN_LEFT
+            else:
+                movement_list.append("TURN_RIGHT")
+                self.movements[ant_id] = movement_list
+                return AntAction.TURN_RIGHT
 
     def _decide_movement(self, perception: AntPerception) -> AntAction:
         """Decide which direction to move based on current state"""
@@ -61,6 +103,7 @@ class NonCooperativeAgent(AntStrategy):
         movement_list = self.movements.get(ant_id, [])
         path_found = self.path_found.get(ant_id, False)
         factor = self.factor.get(ant_id, 0)
+        returning = self.returning.get(ant_id, False)
 
         if movement_list:
             last = movement_list[-1]
@@ -72,25 +115,10 @@ class NonCooperativeAgent(AntStrategy):
         if last == "COLONY" or last == "FOOD":
 
 
-            
-
-            for i in range(len(movement_list)):
-                if movement_list[i] == "TURN_LEFT":
-                    movement_list[i] = "TURN_RIGHT"
-                elif movement_list[i] == "TURN_RIGHT":
-                    movement_list[i] = "TURN_LEFT"
-
-            if factor < 0:
-                self.factor[ant_id] = 0
-            elif factor >= 0:
-                self.factor[ant_id] = -1
-
-            print(movement_list)
-
             if last == "FOOD":
-                print("found")
+                print("Food Found")
 
-
+                self.factor[ant_id] = -1
                 movement_list.pop(-1)
                 if path_found:
                     for i in range(4):
@@ -108,9 +136,13 @@ class NonCooperativeAgent(AntStrategy):
 
 
             if last == "COLONY":
-                
+                self.factor[ant_id] = 0
+                print("Got back to colony")
                 movement_list.pop(-1)
-                movement_list = movement_list[factor:-1]
+                if factor < len(movement_list):
+                    movement_list = movement_list[factor:] if factor < -1 else movement_list[:-1]
+                else:
+                    movement_list = []
                 for i in range(4):
                     movement_list.pop(-1)
                     movement_list.insert(0, "TURN_LEFT")
@@ -119,53 +151,56 @@ class NonCooperativeAgent(AntStrategy):
                 f"------------------ W => {weight}" \
                 "")
                 self.movements[ant_id] = movement_list
+                self.path_found[ant_id] = True
+                path_found = True
             
-            
+            print(movement_list)
+            print(f"PATH FOUND ? ----> {path_found}")
             self.movements[ant_id] = movement_list
-
-
-        if abs(factor) == len(movement_list) and len(movement_list) != 0:
-            
-            print("---------------------------" \
-            "--------------------------------" \
-            "\n \n"\
-            "PATH OUT OF REACH, LOOKING FOR A NEW PATH"\
-            "\n\n"\
-            "---------------------" \
-            "------------------------------"
-            )
-            path_found = False
-            self.path_found[ant_id] = False
-
             
         # if a path has been found follow this path
 
-        if path_found:
+        actual_factor = self.factor.get(ant_id, 0)
+        if abs(actual_factor) < len(movement_list):
+            move = movement_list[actual_factor]
+        else:
+            print(">>> PATH END REACHED OR INVALID FACTOR, RESETTING")
+            self.path_found[ant_id] = False
+            self.factor[ant_id] = 0
+
+
+        if self.path_found[ant_id] :
             
             print(f"ABSOLUTE VALUE : {abs(self.factor.get(ant_id))}")
             print(f"WEIGHT : {len(movement_list)}")
-            actual_factor = self.factor.get(ant_id)
             print(f"Current factor : {actual_factor}")
-            move = movement_list[actual_factor]
-
-            print(f"Following path...   ->> {move}")
+            print(f"Ant ID : {ant_id}")
+            
 
             if actual_factor < 0:
                 self.factor[ant_id] -= 1
             elif actual_factor >= 0:
                 self.factor[ant_id] += 1
 
+            print(f"Following path...   ->> {move}")
             match move:
                 case "MOVE_FORWARD":
-                    print("------------GOING FORWARD")
                     return AntAction.MOVE_FORWARD
                 case "TURN_LEFT":
-                    print("------------GOING LEFT")
-                    return AntAction.TURN_LEFT
+      
+                    if returning:
+                        return AntAction.TURN_RIGHT
+                    else:
+                        return AntAction.TURN_LEFT
                 case "TURN_RIGHT":
-                    print("------------GOING RIGHT")
-                    return AntAction.TURN_RIGHT
 
+                    if returning:
+                        return AntAction.TURN_LEFT
+                    else:
+                        return AntAction.TURN_RIGHT
+                case _:
+
+                    print(f"/\ WARNING ------> the move, {move} doens't match")
         print("Not currently following any path...")
 
         # If has food, try to move toward colony if visible
@@ -189,18 +224,7 @@ class NonCooperativeAgent(AntStrategy):
                         self.movements[ant_id] = movement_list
                         return AntAction.MOVE_FORWARD
 
-        # Random movement if no specific goal
-        movement_choice = random.random()
+        move = self._random_move(ant_id, movement_list, perception)
+        return move
 
-        if movement_choice < 0.6:  # 60% chance to move forward
-            movement_list.append("MOVE_FORWARD")
-            self.movements[ant_id] = movement_list
-            return AntAction.MOVE_FORWARD
-        elif movement_choice < 0.8:  # 20% chance to turn left
-            movement_list.append("TURN_LEFT")
-            self.movements[ant_id] = movement_list
-            return AntAction.TURN_LEFT
-        else:  # 20% chance to turn right
-            movement_list.append("TURN_RIGHT")
-            self.movements[ant_id] = movement_list
-            return AntAction.TURN_RIGHT
+
