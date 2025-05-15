@@ -9,7 +9,7 @@ class PathMemoryStrategy(AntStrategy):
 
     def __init__(self):
         # Memory for each ant: tracks paths and state
-        self.ant_memory = {}  # ant_id -> {"path": [...], "returning": bool, "pathFound": bool}
+        self.ant_memory = {}  # ant_id -> {"path": [...], "returning": bool, "pathFound": bool, "foodpos": (int, int)}
 
 
     def decide_action(self, perception: AntPerception) -> AntAction:
@@ -18,7 +18,7 @@ class PathMemoryStrategy(AntStrategy):
 
         # Initialize memory for new ants
         if ant_id not in self.ant_memory:
-            self.ant_memory[ant_id] = {"path": [(0,0)], "returning": False, "pathFound": False}
+            self.ant_memory[ant_id] = {"path": [(0,0)], "returning": False, "pathFound": False, "foodpos": None}
 
         memory = self.ant_memory[ant_id]
         path = memory.get('path')
@@ -27,12 +27,37 @@ class PathMemoryStrategy(AntStrategy):
 
         # 1. Pick up food if standing on it
         if not perception.has_food and (0, 0) in perception.visible_cells and perception.visible_cells[(0, 0)] == TerrainType.FOOD:
+            
+            if memory["pathFound"]:
+                actual_coordinates = path[0]
+                path.pop(0)
+                path.append(actual_coordinates)
+                memory["path"] = path
+            else:
+                memory["pathFound"] = True
+                actual_coordinates = path[-1]
+            memory["foodpos"] = actual_coordinates
             memory["returning"] = True  # Start retracing
-            memory["pathFound"] = True 
+            
+            
+
             return AntAction.PICK_UP_FOOD
 
         # 2. Drop food if at colony
         if perception.has_food and (0, 0) in perception.visible_cells and perception.visible_cells[(0, 0)] == TerrainType.COLONY:
+
+            actual_coordinates = path[-1]
+            path.pop(-1)
+            path.insert(0, actual_coordinates)
+
+
+            if path[0] != (0, 0) and (0,0) in path:
+                while path[-1] != (0,0):
+                    path.pop(-1)
+                path.pop(-1)
+
+
+            memory["path"] = path
             memory["returning"] = False
             return AntAction.DROP_FOOD
         
@@ -41,8 +66,18 @@ class PathMemoryStrategy(AntStrategy):
         if not perception.has_food:
             # Going to food: build path
             if memory["pathFound"]:
-                action = self._following_path_action(perception, memory["returning"])
-                return action
+                # Check if the ant is actually on the foodpos, if that's case it means there's no more food in this place
+
+                actual_coordinates = path[0]
+                if actual_coordinates != memory["foodpos"]:                            
+                    action = self._following_path_action(perception, memory["returning"])
+                    return action
+                else:
+                    print(">>> NO FOOD FOUND, LOOKING FOR ANOTHER FOOD")
+                    path.pop(0)
+                    path.append(actual_coordinates)
+                    memory["path"] = path
+                    memory["pathFound"] = False
             action = self._choose_exploration_action(perception)
             return action
         else:
@@ -65,6 +100,9 @@ class PathMemoryStrategy(AntStrategy):
             elif r <= 0.5:
                 return AntAction.TURN_LEFT
 
+        if perception.can_see_food():
+            action = self._choose_surrounding_action(perception)
+            return action
 
         if r < 0.6:
             self._get_new_coordinates(perception)
@@ -75,7 +113,48 @@ class PathMemoryStrategy(AntStrategy):
         else:
             print("GOING RIGHT")
             return AntAction.TURN_RIGHT
+    
+    def _choose_surrounding_action(self, perception: AntPerception) -> AntAction:
+
+        """
         
+            Check if there's any food in the ant's perception and if so, go towards it
+
+        """
+
+            
+        ant_id = perception.ant_id
+        memory = self.ant_memory.get(ant_id)
+
+        direction_to_take = perception.get_food_direction()
+        actual_direction = perception.direction
+
+        print(direction_to_take)
+
+        if direction_to_take == actual_direction.value:
+            
+            self._get_new_coordinates(perception)
+            return AntAction.MOVE_FORWARD
+
+        match actual_direction:
+            case Direction.NORTH:
+                if direction_to_take > 4:
+                    return AntAction.TURN_LEFT
+                else:
+                    return AntAction.TURN_RIGHT
+            case Direction.NORTHWEST:
+                if direction_to_take < 4:
+                    return AntAction.TURN_RIGHT
+                else:
+                    return AntAction.TURN_LEFT
+            case _:
+                if direction_to_take > actual_direction.value:
+                    return AntAction.TURN_RIGHT
+                else:
+                    return AntAction.TURN_LEFT
+
+
+
     def _following_path_action(self, perception: AntPerception, returning) -> AntAction:
         
         """
@@ -151,7 +230,7 @@ class PathMemoryStrategy(AntStrategy):
         print(f"GOING TO THE COORDINATES : {new_coordinate}")
 
         # Saving the new coordinates in the memory
-
+        
         path.append(new_coordinate)
         ant_memory["path"] = path
         self.ant_memory[ant_id] = ant_memory
