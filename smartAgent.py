@@ -1,6 +1,7 @@
 from environment import TerrainType, AntPerception
 from ant import AntAction, AntStrategy
 from common import Direction
+import random
 
 class SmartAgent(AntStrategy):
     """
@@ -9,21 +10,20 @@ class SmartAgent(AntStrategy):
 
     def __init__(self):
         # Memory for each ant: tracks paths and state
-        self.ant_memory = {}  # ant_id -> {"path": [...], "returning": bool, "pathFound": bool, "foodpos": (int, int)}
+        self.ant_memory = {}  # ant_id -> {"path": [...], "returning": bool, "pathFound": bool, "foodpos": (int, int), "actual_pos": (int, int), "col_pos": (int, int), "bypassing": bool}
 
 
     def decide_action(self, perception: AntPerception) -> AntAction:
+        
         
         ant_id = perception.ant_id
 
         # Initialize memory for new ants
         if ant_id not in self.ant_memory:
-            self.ant_memory[ant_id] = {"path": [(0,0)], "returning": False, "pathFound": False, "foodpos": None, "actual_pos": (0,0), "col_pos": (0,0)}
+            self.ant_memory[ant_id] = {"path": [(0,0)], "returning": False, "pathFound": False, "foodpos": None, "actual_pos": (0,0), "col_pos": (0,0), "bypassing": False}
 
         memory = self.ant_memory[ant_id]
         path = memory.get('path')
-
-
 
         # 1. Pick up food if standing on it
         if not perception.has_food and (0, 0) in perception.visible_cells and perception.visible_cells[(0, 0)] == TerrainType.FOOD:
@@ -56,36 +56,49 @@ class SmartAgent(AntStrategy):
                 # Check if the ant is actually on the foodpos, if that's case it means there's no more food in this place
 
                 actual_coordinates = memory["actual_pos"]
-                if actual_coordinates != memory["foodpos"]:                            
-                    action = self._following_path_action(perception, memory["returning"])
+                if actual_coordinates != memory["foodpos"]:
+
+                    if memory["bypassing"]:
+                        action = self._get_new_coordinates(perception)
+                    else:
+                        action = self._following_path_action(perception, memory["returning"])
                     return action
                 else:
-                    # print(">>> NO FOOD FOUND, LOOKING FOR ANOTHER FOOD")
                     path.pop(0)
                     path.append(actual_coordinates)
                     memory["path"] = path
                     memory["pathFound"] = False
-            action = self._choose_exploration_action(perception)
+            if memory["bypassing"]:
+                action = self._get_new_coordinates(perception)
+            else:
+                action = self._choose_exploration_action(perception)
             return action
         else:
             # Returning to colony: follow path in reverse
             if memory["path"]:
-                action = self._following_path_action(perception, memory["returning"])
+                if memory["bypassing"]:
+                    action = self._get_new_coordinates(perception)
+                else:
+                    action = self._following_path_action(perception, memory["returning"])
                 return action
             else:
-                action = self._choose_exploration_action(perception)
-                return action # Fallback
+                if memory["bypassing"]:
+                    action = self._get_new_coordinates(perception)
+                else:
+                    action = self._choose_exploration_action(perception)
+                return action
 
     def _choose_exploration_action(self, perception: AntPerception) -> AntAction:
         """Basic exploration behavior to reach food (simple forward-biased random walk)"""
-        import random
+
         r = random.random()
         
 
-        if len(perception.visible_cells) == 1 or len(perception.visible_cells) == 4:
+        if len(perception.visible_cells) == 1 or (len(perception.visible_cells) <= 4 and perception.direction.value not in [0, 2, 4, 6]):
             if r > 0.5:
                 return AntAction.TURN_RIGHT
             elif r <= 0.5:
+
                 return AntAction.TURN_LEFT
 
         if perception.can_see_food():
@@ -96,8 +109,10 @@ class SmartAgent(AntStrategy):
             action = self._get_new_coordinates(perception, True)
             return action
         elif r < 0.9:
+    
             return AntAction.TURN_LEFT
         else:
+
             return AntAction.TURN_RIGHT
     
     def _choose_surrounding_action(self, perception: AntPerception) -> AntAction:
@@ -107,10 +122,6 @@ class SmartAgent(AntStrategy):
             Check if there's any food in the ant's perception and if so, go towards it
 
         """
-
-            
-        ant_id = perception.ant_id
-        memory = self.ant_memory.get(ant_id)
 
         direction_to_take = perception.get_food_direction()
         actual_direction = perception.direction
@@ -187,6 +198,15 @@ class SmartAgent(AntStrategy):
         direction = perception.direction
 
         delta = Direction.get_delta(direction)
+
+        if perception.visible_cells[delta] == TerrainType.WALL: # If the ant is going to a wall, make it turn
+            ant_memory["bypassing"] = True
+            r = random.random()
+            if r > 0.5:
+                return AntAction.TURN_RIGHT
+            elif r <= 0.5:
+                return AntAction.TURN_LEFT
+
         new_coordinate = tuple(x + y for x,y in zip(actual_coordinates, delta))
         # Saving the new coordinates in the memory
         if not ant_memory["pathFound"]:
@@ -196,6 +216,7 @@ class SmartAgent(AntStrategy):
         ant_memory["actual_pos"] = new_coordinate
         ant_memory["path"] = path
         self.ant_memory[ant_id] = ant_memory
+        ant_memory["bypassing"] = False
         return AntAction.MOVE_FORWARD
 
     def _get_turn(self, actual_direction, direction_to_take):
@@ -220,6 +241,11 @@ class SmartAgent(AntStrategy):
                     return AntAction.TURN_RIGHT
                 else:
                     return AntAction.TURN_LEFT
+                
+
+
+
+    
     def distance_squared(self, p, ref):
         return (p[0] - ref[0])**2 + (p[1] - ref[1])**2
              
